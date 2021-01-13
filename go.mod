@@ -1,4 +1,4 @@
-module krypt
+module github.com/schecbr/krypt
 
 go 1.15
 
