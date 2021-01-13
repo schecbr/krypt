@@ -24,7 +24,7 @@ import (
 var encryptCmd = &cobra.Command{
 	Use:   "encrypt",
 	Short: "The encrypt command will encrypt a file",
-	Long: 'Krypt is CLI that allows users to easily encrypt and decrypt files with sane defaults.'
+	Long: "Krypt is CLI that allows users to easily encrypt and decrypt files with sane defaults.",
 
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("encrypt called")
