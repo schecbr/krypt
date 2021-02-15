@@ -18,12 +18,12 @@ package cmd
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/md5"
 	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -40,45 +40,103 @@ var encryptCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("encrypt called")
 		passphrase, _ := cmd.Flags().GetString("passphrase")
+		filename, _ := cmd.Flags().GetString("filename")
 
 		if passphrase == "" {
 			return errors.New("Must specify a passphrase")
 		}
 
+		pdata := []byte(passphrase)
+		sha256Bytes := sha256.Sum256(pdata)
+
+		if filename == "" {
+			return errors.New("Must specify a filename")
+		}
+
+		outFilename := filename + ".enc"
+
 		fmt.Println("passphrase: " + passphrase)
-		encryptFile("master.key", []byte("Hello World"), passphrase)
-		return errors.New("Something went wrong")
+		fmt.Println("filename: " + filename)
+		encryptFile(filename, outFilename, sha256Bytes[:])
+		return nil
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(encryptCmd)
-	encryptCmd.Flags().StringP("passphrase", "s", "", "Passphrase to create hash")
+	encryptCmd.Flags().StringP("passphrase", "p", "", "Passphrase to create hash")
+	encryptCmd.Flags().StringP("filename", "f", "", "Filename to encrypt")
 
 }
 
-func createHash(key string) string {
-	hasher := md5.New()
-	hasher.Write([]byte(key))
-	return hex.EncodeToString(hasher.Sum(nil))
+func createHash(key string) []byte {
+	//hasher := md5.New()
+	//hasher.Write([]byte(key))
+	sha256Bytes := sha256.Sum256([]byte(key))
+	return sha256Bytes[:]
 }
 
-func encrypt(data []byte, passphrase string) []byte {
-	block, _ := aes.NewCipher([]byte(createHash(passphrase)))
-	gcm, err := cipher.NewGCM(block)
+// encryptFile encrypts the file specified by filename with the given key,
+// placing the result in outFilename (or filename + ".enc" if outFilename is
+// empty). The key has to be 16, 24 or 32 bytes long to select between AES-128,
+// AES-192 or AES-256. Returns the name of the output file if successful.
+
+func encryptFile(filename string, outFilename string, sha256Bytes []byte) (string, error) {
+	if len(outFilename) == 0 {
+		outFilename = filename + ".enc"
+	}
+
+	plaintext, err := ioutil.ReadFile(filename)
 	if err != nil {
-		panic(err.Error())
+		return "", err
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		panic(err.Error())
-	}
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext
-}
 
-func encryptFile(filename string, data []byte, passphrase string) {
-	f, _ := os.Create(filename)
-	defer f.Close()
-	f.Write(encrypt(data, passphrase))
+	of, err := os.Create(outFilename)
+	if err != nil {
+		return "", err
+	}
+	defer of.Close()
+
+	// Write the original plaintext size into the output file first, encoded in
+	// a 8-byte integer.
+	origSize := uint64(len(plaintext))
+	if err = binary.Write(of, binary.LittleEndian, origSize); err != nil {
+		return "", err
+	}
+
+	// Pad plaintext to a multiple of BlockSize with random padding.
+	if len(plaintext)%aes.BlockSize != 0 {
+		bytesToPad := aes.BlockSize - (len(plaintext) % aes.BlockSize)
+		padding := make([]byte, bytesToPad)
+		if _, err := rand.Read(padding); err != nil {
+			return "", err
+		}
+		plaintext = append(plaintext, padding...)
+	}
+
+	// Generate random IV and write it to the output file.
+	iv := make([]byte, aes.BlockSize)
+	if _, err := rand.Read(iv); err != nil {
+		return "", err
+	}
+	if _, err = of.Write(iv); err != nil {
+		return "", err
+	}
+
+	// Ciphertext has the same size as the padded plaintext.
+	ciphertext := make([]byte, len(plaintext))
+
+	// Use AES implementation of the cipher.Block interface to encrypt the whole
+	// file in CBC mode.
+	block, err := aes.NewCipher(sha256Bytes)
+	if err != nil {
+		return "", err
+	}
+	mode := cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(ciphertext, plaintext)
+
+	if _, err = of.Write(ciphertext); err != nil {
+		return "", err
+	}
+	return outFilename, nil
 }
