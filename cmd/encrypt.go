@@ -64,7 +64,7 @@ var encryptCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(encryptCmd)
-	encryptCmd.Flags().StringP("passphrase", "p", "", "Passphrase to create hash")
+	encryptCmd.Flags().StringP("passphrase", "p", "", "Passphrase to encrypt file")
 	encryptCmd.Flags().StringP("filename", "f", "", "Filename to encrypt")
 
 }
